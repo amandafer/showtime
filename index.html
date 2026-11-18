@@ -255,7 +255,9 @@ function tickNext(id){const it=DB.items[id],p=progress(it);if(!p||!p.next)return
 
 /* ================= resolver: match titles to TVmaze / Wikipedia ================= */
 let resolving=false;const S={resolveTotal:0,resolveDone:0};
-async function resolveAll(){if(resolving)return;resolving=true;
+let resolveP=null;
+function resolveAll(){if(resolveP)return resolveP.then(()=>S.importing?resolveAll():null);resolveP=resolveRun().finally(()=>{resolveP=null});return resolveP}
+async function resolveRun(){resolving=true;
   const todo=items().filter(i=>(i.type==="series"&&!i.tvmazeId&&!i.unmatched)||(i.type==="movie"&&!i.wikiTried));
   S.resolveTotal=todo.length;S.resolveDone=0;if(todo.length)render();
   for(const ref of todo){const it=DB.items[ref.id];if(!it){S.resolveDone++;continue}
@@ -271,7 +273,7 @@ async function resolveAll(){if(resolving)return;resolving=true;
           else put(it)}
         else{if(films[0]&&norm(films[0].title).startsWith(norm(it.title).slice(0,6))){Object.assign(it,{image:films[0].image,year:films[0].year,wiki:films[0].wiki})}put(it)}}
     }catch(e){}
-    S.resolveDone++;if(S.resolveDone%4===0)render()}
+    S.resolveDone++;if(S.importing||S.resolveDone%4===0)render()}
   resolving=false;S.resolveTotal=0;render()}
 function mergeEpisodeInto(film,s){const showName=s.name,id=slug(showName),old=DB.items[id];
   const rest=film.title.split(/:\s+/).slice(1),ep=rest[rest.length-1]||"",sm=rest.length>1&&rest[0].match(/\d+/);const season=sm?+sm[0]:1;
@@ -282,6 +284,18 @@ function mergeEpisodeInto(film,s){const showName=s.name,id=slug(showName),old=DB
     lastWatched:last,episodes:(old&&old.episodes||0)+1,rating:Math.max(old&&old.rating||0,film.rating||0),nf:[...new Set([...(old&&old.nf||[]),season+"|"+ep])]};
   if(!old||old.status==="want")it.status=last>=c?"watching":"watched";
   delete it.unmatched;if(film.id!==id)del(film.id);put(it);loadShow(s.id)}
+async function startSetup(){S.importing=true;S.phase="match";render();
+  await resolveAll();
+  S.phase="episodes";const need=items().filter(i=>i.type==="series"&&i.tvmazeId&&i.status!=="dropped"&&!showFresh(cacheGet(i.tvmazeId)));
+  S.epTotal=need.length;S.epDone=0;render();
+  for(const i of need){await loadShow(i.tvmazeId);S.epDone++;if(S.epDone%3===0||S.epDone===S.epTotal)render()}
+  S.importing=false;S.phase="";render();toast(`All set: ${items().length} titles in your log`)}
+function setupHTML(){const m=S.phase==="match",done=m?S.resolveDone:S.epDone,total=m?S.resolveTotal:S.epTotal,pct=total?Math.round(done/total*100):0;
+  return `<h2>Setting up</h2><div class="card"><h3>${m?"Matching your titles":"Loading episode lists"}</h3>
+    <p class="small muted">${m?"Finding each show and film, with posters.":"Getting every season and air date so Up next is accurate."} ${total?`${done} of ${total}`:""}</p>
+    <div class="progress"><i style="width:${pct}%"></i></div>
+    <p class="small muted" style="margin:0">Step ${m?1:2} of 2. Keep the app open; this takes about a minute per 100 shows.</p></div>
+    <div class="grid">${Array.from({length:9},()=>`<div class="skel" style="aspect-ratio:2/3"></div>`).join("")}</div>`}
 let refreshing=false;
 async function refreshShows(){if(refreshing)return;refreshing=true;
   const list=items().filter(i=>i.type==="series"&&i.tvmazeId&&i.status!=="dropped");
@@ -334,7 +348,7 @@ function runImport(){const p=S.preview;S.preview=null;const now=new Date().toISO
     if(old)put({...old,episodes:Math.max(old.episodes||0,x.episodes),lastWatched:(old.lastWatched||"")>x.lastWatched?old.lastWatched:x.lastWatched,
       status:old.status==="want"||old.status==="skip"?x.status:old.status,nf:[...new Set([...(old.nf||[]),...x.nf])].slice(0,1500)});
     else put({id:x.id,title:x.title,type:x.type,status:x.status,rating:0,platform:"Netflix",episodes:x.episodes,nf:x.nf,seen:[],lastWatched:x.lastWatched,addedAt:now,source:"netflix",notes:""})}
-  location.hash="home";render();toast(`Imported ${p.list.length} titles. Matching posters and episodes…`);resolveAll()}
+  location.hash="home";startSetup();}
 
 /* ================= backup ================= */
 function exportBackup(){const data=JSON.stringify({app:"ShowTime",version:1,exportedAt:new Date().toISOString(),items:Object.values(DB.items),settings:DB.settings});
@@ -357,13 +371,13 @@ function render(){
   const v=route();document.querySelectorAll("nav.tabs a").forEach(a=>a.setAttribute("aria-current",a.dataset.v===v?"page":"false"));
   const el=$("#view"),scroll=window.scrollY,ae=document.activeElement,fid=ae&&ae.id,sel=ae&&ae.selectionStart;
   const keep={};el.querySelectorAll("input[id]:not([type=file]),textarea[id],select[id]").forEach(f=>{if(f.id!=="sq"&&f.id!=="lq")keep[f.id]=f.value});
-  el.innerHTML=v==="home"?viewHome():v==="library"?viewLibrary():v==="search"?viewSearch():viewMore();
+  el.innerHTML=S.importing&&(v==="home"||v==="library")?setupHTML():v==="home"?viewHome():v==="library"?viewLibrary():v==="search"?viewSearch():viewMore();
   for(const k in keep){const f=document.getElementById(k);if(f)f.value=keep[k]}
   if(fid){const f=document.getElementById(fid);if(f){f.focus();try{if(sel!=null)f.setSelectionRange(sel,sel)}catch(e){}}}
   window.scrollTo(0,scroll);
   const nb=items().filter(i=>{if(i.type!=="series"||i.status==="dropped")return false;const p=progress(i);return p&&p.started&&p.next}).length;
   const b=$("#nbadge");b.hidden=!nb;b.textContent=nb;
-  $("#status").textContent=S.resolveTotal?`Matching ${S.resolveDone}/${S.resolveTotal}…`:navigator.onLine===false?"Offline":"";
+  $("#status").textContent=S.importing?"Setting up…":S.resolveTotal?`Matching ${S.resolveDone}/${S.resolveTotal}…`:navigator.onLine===false?"Offline":"";
 }
 function nextHTML(i,p){const n=p.next;
   return `<div class="item"><button class="open" data-act="open" data-id="${esc(i.id)}">${posterHTML(i.title,i.image)}<div style="min-width:0"><div class="t">${esc(i.title)}</div>
@@ -386,8 +400,7 @@ function viewHome(){
   ups.sort((a,b)=>a.e.date.localeCompare(b.e.date)||a.i.title.localeCompare(b.i.title));const days={};ups.slice(0,80).forEach(u=>(days[u.e.date]=days[u.e.date]||[]).push(u));
   const rel=d=>{const n=Math.round((new Date(d+"T12:00:00")-new Date(t+"T12:00:00"))/864e5);return n===1?"tomorrow":n<14?`in ${n} days`:`in ${Math.round(n/7)} weeks`};
   const loading=ser.filter(x=>!x.p&&x.i.tvmazeId).length,unmatched=ser.filter(x=>x.i.unmatched&&x.i.status==="watching");
-  return `${S.resolveTotal?`<div class="card"><h3>Matching your titles</h3><p class="small muted">Finding posters and episode lists: ${S.resolveDone} of ${S.resolveTotal}.</p><div class="progress"><i style="width:${Math.round(S.resolveDone/S.resolveTotal*100)}%"></i></div></div>`:""}
-  <h2>Up next</h2>
+  return `<h2>Up next</h2>
   ${upnext.length?`<div class="list">${upnext.map(x=>nextHTML(x.i,x.p)).join("")}</div>`:loading?`<div class="skel" style="height:90px;margin-bottom:8px"></div><div class="skel" style="height:90px"></div>`:`<div class="empty muted">You're up to date on everything you're watching.</div>`}
   ${unmatched.length?`<p class="small muted" style="margin-top:8px">Couldn't find ${unmatched.map(x=>esc(x.i.title)).join(", ")} on TVmaze. Open it and tap <b>Find the right show</b>.</p>`:""}
   <h2>Want to watch</h2>
@@ -503,8 +516,8 @@ document.addEventListener("click",e=>{const b=e.target.closest("[data-act]");if(
   if(a==="import-go"){runImport();return}
   if(a==="import-cancel"){S.preview=null;render();return}
   if(a==="export"){exportBackup();return}
-  if(a==="rematch"){items().forEach(i=>{delete i.unmatched;delete i.wikiTried});save();resolveAll();toast("Re-matching titles…");return}
-  if(a==="bk-import"){try{const n=importBackup($("#bk").value);$("#bk").value="";toast(`Imported ${n} titles. Matching posters…`);location.hash="home";render();resolveAll()}catch(err){toast(err.message)}return}
+  if(a==="rematch"){items().forEach(i=>{delete i.unmatched;delete i.wikiTried});save();location.hash="home";startSetup();return}
+  if(a==="bk-import"){try{const n=importBackup($("#bk").value);$("#bk").value="";location.hash="home";startSetup()}catch(err){toast(err.message)}return}
   const it=sheetItem();if(!it)return;
   if(a==="status"){if(!sheet.id){const x=sheet.temp;const n=addFromResult(x,x.type,v);sheet.id=n.id;sheet.temp=null}else{const i={...DB.items[sheet.id],status:v};if(v!=="want"&&!i.lastWatched)i.lastWatched=today();put(i)}
     drawSheet();render();toast(STATUS[v]);return}
@@ -528,7 +541,7 @@ document.addEventListener("change",e=>{const t=e.target;
   else if(t.id==="prof"&&S.preview){S.preview=buildPreview(S.preview.rows,t.value);render()}
   else if(t.id==="csv"||t.id==="bkfile"){const f=t.files[0];if(!f)return;const rd=new FileReader();
     rd.onload=()=>{try{if(t.id==="csv"){const rows=parseCSV(String(rd.result));if(rows.length<2)throw new Error("That file is empty.");S.preview=buildPreview(rows)}
-      else{const n=importBackup(String(rd.result));toast(`Imported ${n} titles`);location.hash="home";resolveAll()}render()}catch(err){toast(err.message||"Couldn't read that file")}};rd.readAsText(f)}});
+      else{const n=importBackup(String(rd.result));location.hash="home";startSetup()}render()}catch(err){toast(err.message||"Couldn't read that file")}};rd.readAsText(f)}});
 $("#scrim").addEventListener("click",e=>{if(e.target.id==="scrim")closeSheet()});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&(sheet.id||sheet.temp))closeSheet()});
 window.addEventListener("hashchange",()=>{window.scrollTo(0,0);render()});
