@@ -208,8 +208,9 @@ function loadShow(id,force){
     cacheSet(id,v);if(changed){scheduleRender();if(sheet.id||sheet.temp)setTimeout(()=>{if(sheet.id||sheet.temp)drawSheet()},210)}return v}).catch(()=>c).finally(()=>{delete inflight[id]})}
 async function searchShows(q){const r=await tvm(`/search/shows?q=${encodeURIComponent(q)}`);return(r||[]).map(x=>x.show)}
 function showBrief(s){const net=s.network||s.webChannel||{};return{tvmazeId:s.id,title:s.name,image:s.image?(s.image.medium||s.image.original):"",year:(s.premiered||"").slice(0,4),network:net.name||"",status:s.status,genres:s.genres||[],summary:strip(s.summary)}}
-function pickShow(list,name,opts={}){const n=norm(name);const exact=list.filter(s=>norm(s.name)===n);const pool=exact.length?exact:[];
-  if(!pool.length)return opts.loose&&list[0]&&norm(list[0].name).startsWith(n.slice(0,Math.max(4,n.length-3)))?list[0]:null;
+const nameKey=t=>norm(String(t||"").replace(/\s*\((?:19|20)\d{2}\)\s*$/,"").replace(/\s*\((?:US|UK|GB)\)\s*$/i,""));
+function pickShow(list,name,opts={}){const n=nameKey(name);const pool=list.filter(s=>nameKey(s.name)===n);
+  if(!pool.length)return null;
   pool.sort((a,b)=>{const na=((a.network||a.webChannel||{}).name||"")==="Netflix",nb=((b.network||b.webChannel||{}).name||"")==="Netflix";
     if(opts.netflix&&na!==nb)return nb-na;return(b.premiered||"").localeCompare(a.premiered||"")});
   return pool[0]}
@@ -267,16 +268,17 @@ async function resolveRun(){resolving=true;
   S.resolveTotal=todo.length;S.resolveDone=0;if(todo.length)render();
   for(const ref of todo){const it=DB.items[ref.id];if(!it){S.resolveDone++;continue}
     try{
-      if(it.type==="series"){const list=await searchShows(it.title);const s=pickShow(list,it.title,{netflix:it.source==="netflix",loose:true});
+      if(it.type==="series"){const list=await searchShows(it.title);const s=pickShow(list,it.title,{netflix:it.source==="netflix"});
         if(s){Object.assign(it,{tvmazeId:s.id,image:s.image?(s.image.medium||s.image.original):"",year:(s.premiered||"").slice(0,4),network:((s.network||s.webChannel||{}).name)||it.platform||""});loadShow(s.id)}else it.unmatched=true;put(it)}
       else{it.wikiTried=true;
         const films=await searchFilms(it.title,3);const f=films.find(x=>norm(x.title)===norm(it.title))||null;
         if(f){Object.assign(it,{image:f.image,year:f.year,wiki:f.wiki});put(it)}
         else if(it.title.includes(": ")){/* maybe an episode: "Show: Episode name" */
-          const showName=it.title.split(/:\s+/)[0];const list=await searchShows(showName);const s=pickShow(list,showName,{netflix:it.source==="netflix"});
-          if(s){mergeEpisodeInto(it,s);S.resolveDone++;render();continue}
-          else put(it)}
-        else{if(films[0]&&norm(films[0].title).startsWith(norm(it.title).slice(0,6))){Object.assign(it,{image:films[0].image,year:films[0].year,wiki:films[0].wiki})}put(it)}}
+          const parts=it.title.split(/:\s+/),showName=parts[0],ep=parts[parts.length-1];const list=await searchShows(showName);const s=pickShow(list,showName,{netflix:it.source==="netflix"});
+          let ok=false;if(s){const v=await loadShow(s.id);ok=!!(v&&v.eps.some(e=>norm(e[2])===norm(ep)))||/^(episode|chapter|epis[oó]dio|cap[ií]tulo)\s*\d+$/i.test(ep)}
+          if(ok){mergeEpisodeInto(it,s);S.resolveDone++;render();continue}
+          put(it)}
+        else put(it)}
     }catch(e){}
     S.resolveDone++;if(S.importing||S.resolveDone%4===0)render()}
   resolving=false;S.resolveTotal=0;render()}
@@ -286,7 +288,7 @@ function mergeEpisodeInto(film,s){const showName=s.name,id=slug(showName),old=DB
   const last=[film.lastWatched||"",old&&old.lastWatched||""].sort().pop();
   const it={...(old||{id,title:showName,type:"series",rating:0,seen:[],episodes:0,addedAt:film.addedAt||new Date().toISOString(),source:film.source,notes:""}),
     type:"series",tvmazeId:s.id,image:s.image?(s.image.medium||s.image.original):"",year:(s.premiered||"").slice(0,4),network:((s.network||s.webChannel||{}).name)||"",
-    lastWatched:last,episodes:(old&&old.episodes||0)+1,rating:Math.max(old&&old.rating||0,film.rating||0),nf:[...new Set([...(old&&old.nf||[]),season+"|"+ep])]};
+    lastWatched:last,episodes:(old&&old.episodes||0)+1,mergedFrom:[...new Set([...(old&&old.mergedFrom||[]),film.title])],rating:Math.max(old&&old.rating||0,film.rating||0),nf:[...new Set([...(old&&old.nf||[]),season+"|"+ep])]};
   if(!old||old.status==="want")it.status=last>=c?"watching":"watched";
   delete it.unmatched;if(film.id!==id)del(film.id);put(it);loadShow(s.id)}
 async function startSetup(){S.importing=true;S.phase="match";render();
@@ -464,6 +466,8 @@ function viewMore(){const p=S.preview,all=items();
   <h2>Picks from Claude</h2><div class="card"><p class="small muted">Opens Claude with your favourites filled in.</p><a class="btn" href="https://claude.ai/new?q=${encodeURIComponent(prompt.slice(0,1800))}" target="_blank" rel="noopener">Ask Claude for picks</a></div>
   <h2>Backup</h2><div class="card"><p class="small muted">Your log is saved on this device. Save a backup now and then, or to move it to another device.</p>
     <div class="row"><button class="btn" data-act="export">Save backup</button><button class="btn ghost" data-act="rematch">Re-match posters</button></div></div>
+  <h2>Start over</h2><div class="card"><p class="small muted">Erases everything on this device, so you can import again from scratch. Save a backup first if you want to keep anything.</p>
+    <button class="btn ghost" data-act="erase" style="${S.eraseConfirm?"background:var(--velvet);color:#fff;border-color:var(--velvet)":""}">${S.eraseConfirm?"Tap again to erase everything":"Erase all data"}</button></div>
   <p class="small muted">ShowTime · ${all.length} titles · TV data from <a href="https://www.tvmaze.com" target="_blank" rel="noopener">TVmaze</a> (CC BY-SA), film data from Wikipedia.</p>`}
 
 /* ================= sheet ================= */
@@ -532,6 +536,8 @@ document.addEventListener("click",e=>{const b=e.target.closest("[data-act]");if(
   if(a==="import-go"){runImport();return}
   if(a==="import-cancel"){S.preview=null;render();return}
   if(a==="export"){exportBackup();return}
+  if(a==="erase"){if(!S.eraseConfirm){S.eraseConfirm=true;render();setTimeout(()=>{S.eraseConfirm=false;render()},5000);return}
+    S.eraseConfirm=false;DB={items:{},settings:{}};try{localStorage.removeItem(LS)}catch(err){}save();render();toast("Everything erased");return}
   if(a==="rematch"){items().forEach(i=>{delete i.unmatched;delete i.wikiTried});save();location.hash="home";startSetup();return}
   if(a==="bk-import"){try{const n=importBackup($("#bk").value);$("#bk").value="";location.hash="home";startSetup()}catch(err){toast(err.message)}return}
   const it=sheetItem();if(!it)return;
