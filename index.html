@@ -256,7 +256,8 @@ function tickNext(id){const it=DB.items[id],p=progress(it);if(!p||!p.next)return
 /* ================= resolver: match titles to TVmaze / Wikipedia ================= */
 let resolving=false;const S={resolveTotal:0,resolveDone:0};
 let resolveP=null;
-function resolveAll(){if(resolveP)return resolveP.then(()=>S.importing?resolveAll():null);resolveP=resolveRun().finally(()=>{resolveP=null});return resolveP}
+function resolveAll(){const start=()=>{resolveP=resolveRun().finally(()=>{resolveP=null});return resolveP};
+  if(resolveP)return resolveP.then(()=>resolveP||start());return start()}
 async function resolveRun(){resolving=true;
   const todo=items().filter(i=>(i.type==="series"&&!i.tvmazeId&&!i.unmatched)||(i.type==="movie"&&!i.wikiTried));
   S.resolveTotal=todo.length;S.resolveDone=0;if(todo.length)render();
