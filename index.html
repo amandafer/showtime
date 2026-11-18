@@ -60,7 +60,9 @@ textarea{min-height:110px;resize:vertical}
 .field label{font-size:13px;color:var(--muted);font-weight:500}
 
 .poster{position:relative;border-radius:8px;overflow:hidden;background:var(--surface-2);flex:none;aspect-ratio:2/3}
-.poster img{width:100%;height:100%;object-fit:cover}
+.poster img{width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .25s ease}
+.poster img.ld{opacity:1}
+@media (prefers-reduced-motion:reduce){.poster img{transition:none}}
 .poster .ph{position:absolute;inset:0;display:flex;align-items:flex-end;padding:6px;font:800 13px/1 var(--display);text-transform:uppercase;color:#fff;word-break:break-word}
 .list{display:flex;flex-direction:column;gap:8px}
 .item{display:grid;grid-template-columns:1fr auto;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
@@ -150,6 +152,7 @@ details.season summary .sm{font-weight:500;color:var(--muted);font-size:13px}
 <div class="scrim" id="scrim"><div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle"></div></div>
 <div class="toast" id="toast" role="status"></div>
 
+<script src="morphdom.min.js"></script>
 <script>
 "use strict";
 /* ================= basics ================= */
@@ -169,7 +172,7 @@ const fmtShort=d=>d?new Date(d+"T12:00:00").toLocaleDateString("en-GB",{day:"num
 const epCode=e=>`S${e.s} E${e.e}`;
 function toast(m){const t=$("#toast");t.textContent=m;t.style.display="block";clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display="none",2800)}
 function posterHTML(title,img,extra=""){const h=hue(title);
-  return `<div class="poster" style="background:linear-gradient(160deg,hsl(${h} 45% 32%),hsl(${(h+40)%360} 55% 15%))">${img?`<img src="${esc(img)}" alt="" loading="lazy" onerror="this.remove()">`:`<div class="ph">${esc(String(title).slice(0,40))}</div>`}${extra}</div>`}
+  return `<div class="poster" style="background:linear-gradient(160deg,hsl(${h} 45% 32%),hsl(${(h+40)%360} 55% 15%))">${img?`<img src="${esc(img)}" alt="" loading="lazy" decoding="async" onload="this.classList.add('ld')" onerror="this.remove()">`:`<div class="ph">${esc(String(title).slice(0,40))}</div>`}${extra}</div>`}
 
 /* ================= storage ================= */
 let DB={items:{},settings:{}};
@@ -201,7 +204,8 @@ function loadShow(id,force){
     const net=d.network||d.webChannel||{};
     const show={id:d.id,name:d.name,status:d.status,network:net.name||"",premiered:(d.premiered||"").slice(0,4),genres:d.genres||[],
       image:d.image?(d.image.medium||d.image.original):"",summary:strip(d.summary),rating:d.rating&&d.rating.average,url:d.url,runtime:d.averageRuntime||d.runtime||0};
-    const v={at:Date.now(),show,eps};cacheSet(id,v);return v}).catch(()=>c).finally(()=>{delete inflight[id];scheduleRender()})}
+    const v={at:Date.now(),show,eps};const changed=!c||JSON.stringify(c.eps)!==JSON.stringify(eps)||c.show.status!==show.status||c.show.image!==show.image;
+    cacheSet(id,v);if(changed){scheduleRender();if(sheet.id||sheet.temp)setTimeout(()=>{if(sheet.id||sheet.temp)drawSheet()},210)}return v}).catch(()=>c).finally(()=>{delete inflight[id]})}
 async function searchShows(q){const r=await tvm(`/search/shows?q=${encodeURIComponent(q)}`);return(r||[]).map(x=>x.show)}
 function showBrief(s){const net=s.network||s.webChannel||{};return{tvmazeId:s.id,title:s.name,image:s.image?(s.image.medium||s.image.original):"",year:(s.premiered||"").slice(0,4),network:net.name||"",status:s.status,genres:s.genres||[],summary:strip(s.summary)}}
 function pickShow(list,name,opts={}){const n=norm(name);const exact=list.filter(s=>norm(s.name)===n);const pool=exact.length?exact:[];
@@ -366,16 +370,21 @@ function importBackup(text){let d;try{d=JSON.parse(text)}catch(e){throw new Erro
   if(d.settings)DB.settings={...DB.settings,...d.settings};save();return n}
 
 /* ================= views ================= */
-let rT;function scheduleRender(){clearTimeout(rT);rT=setTimeout(render,120)}
+let rT;function scheduleRender(){clearTimeout(rT);rT=setTimeout(render,200)}
+const MOPTS={onBeforeElUpdated(from,to){
+  if(from.isEqualNode(to))return false;
+  if(from.tagName==="IMG"&&from.getAttribute("src")===to.getAttribute("src"))return false;
+  if(from.tagName==="DETAILS"){if(from.open)to.setAttribute("open","");else to.removeAttribute("open")}
+  if(from===document.activeElement&&(from.tagName==="INPUT"||from.tagName==="TEXTAREA"))return false;
+  return true}};
+function patch(el,html){const tmp=el.cloneNode(false);tmp.innerHTML=html;if(window.morphdom)morphdom(el,tmp,{...MOPTS,childrenOnly:true});else el.innerHTML=html}
+const lastHTML={};
 function route(){const h=location.hash.slice(1);return["home","library","search","more"].includes(h)?h:"home"}
 function render(){
   const v=route();document.querySelectorAll("nav.tabs a").forEach(a=>a.setAttribute("aria-current",a.dataset.v===v?"page":"false"));
-  const el=$("#view"),scroll=window.scrollY,ae=document.activeElement,fid=ae&&ae.id,sel=ae&&ae.selectionStart;
-  const keep={};el.querySelectorAll("input[id]:not([type=file]),textarea[id],select[id]").forEach(f=>{if(f.id!=="sq"&&f.id!=="lq")keep[f.id]=f.value});
-  el.innerHTML=S.importing&&(v==="home"||v==="library")?setupHTML():v==="home"?viewHome():v==="library"?viewLibrary():v==="search"?viewSearch():viewMore();
-  for(const k in keep){const f=document.getElementById(k);if(f)f.value=keep[k]}
-  if(fid){const f=document.getElementById(fid);if(f){f.focus();try{if(sel!=null)f.setSelectionRange(sel,sel)}catch(e){}}}
-  window.scrollTo(0,scroll);
+  const el=$("#view");
+  const html=S.importing&&(v==="home"||v==="library")?setupHTML():v==="home"?viewHome():v==="library"?viewLibrary():v==="search"?viewSearch():viewMore();
+  if(lastHTML.v!==v||lastHTML.html!==html){patch(el,html);lastHTML.v=v;lastHTML.html=html}
   const nb=items().filter(i=>{if(i.type!=="series"||i.status==="dropped")return false;const p=progress(i);return p&&p.started&&p.next}).length;
   const b=$("#nbadge");b.hidden=!nb;b.textContent=nb;
   $("#status").textContent=S.importing?"Setting up…":S.resolveTotal?`Matching ${S.resolveDone}/${S.resolveTotal}…`:navigator.onLine===false?"Offline":"";
@@ -464,7 +473,7 @@ function openSheet(id,temp){sheet.id=id||null;sheet.temp=temp||null;sheet.open=n
   const it=sheetItem();if(it&&it.type==="series"&&it.tvmazeId)loadShow(it.tvmazeId).then(()=>{if(sheetItem()===it||sheet.id===it.id)drawSheet()});
   if(it&&it.type==="movie"&&it.wiki&&!sheet.extract[it.wiki])filmExtract(it.wiki).then(x=>{sheet.extract[it.wiki]=x;drawSheet()}).catch(()=>{})}
 function closeSheet(){$("#scrim").classList.remove("open");sheet.id=null;sheet.temp=null;document.body.style.overflow=""}
-function drawSheet(){const it=sheetItem();if(!it)return closeSheet();const mine=!!sheet.id,sc=$("#sheet").scrollTop;
+function drawSheet(){const it=sheetItem();if(!it)return closeSheet();const mine=!!sheet.id;
   const c=it.type==="series"&&it.tvmazeId?cacheGet(it.tvmazeId):null,show=c&&c.show;
   const img=it.image||(show&&show.image)||"";
   const meta=[it.type==="series"?"Series":"Film",it.year||(show&&show.premiered),show?show.network:it.network,show&&show.status==="Ended"?"Ended":show&&show.status==="Running"?"Returning":"",show&&show.rating?`★ ${show.rating}`:""].filter(Boolean).join(" · ");
@@ -481,7 +490,7 @@ function drawSheet(){const it=sheetItem();if(!it)return closeSheet();const mine=
     ${it.type==="series"?`<button class="btn ghost sm" data-act="rematch-one">Find the right show</button>`:it.title.includes(": ")?`<button class="btn ghost sm" data-act="to-series">It's an episode of “${esc(it.title.split(/:\s+/)[0])}”</button>`:""}
     <button class="btn ghost sm" data-act="del" style="${sheet.confirm?"background:var(--velvet);color:#fff;border-color:var(--velvet)":""}">${sheet.confirm?"Tap again to remove":"Remove"}</button></div>`}
   if(sheet.pick)h+=pickHTML();
-  $("#sheet").innerHTML=h;$("#sheet").scrollTop=sc}
+  patch($("#sheet"),h)}
 function episodesHTML(it,mine){
   if(!it.tvmazeId)return it.unmatched?`<div class="card"><p class="small">Couldn't match this to TVmaze, so episodes aren't available. Tap <b>Find the right show</b> below.</p></div>`:`<div class="skel" style="height:60px"></div>`;
   const p=progress(it);if(!p)return `<div class="skel" style="height:120px"></div>`;
@@ -554,7 +563,7 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"&&(sheet.id||sheet.te
 window.addEventListener("hashchange",()=>{window.scrollTo(0,0);render()});
 window.addEventListener("online",render);window.addEventListener("offline",render);
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)refreshShows()});
-if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+if(navigator.serviceWorker&&navigator.serviceWorker.register)navigator.serviceWorker.register("sw.js").catch(()=>{});
 render();resolveAll().then(refreshShows);
 </script>
 </body>
