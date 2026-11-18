@@ -395,7 +395,10 @@ function viewHome(){
   if(!all.length)return `<h2>Welcome</h2><div class="card"><h3>Start your watch log</h3><p class="muted small">Search for a show to add it, or bring in your history from Netflix or your old ShowTime.</p>
     <div class="row"><a class="btn" href="#search">Search</a><a class="btn ghost" href="#more">Import</a></div></div>`;
   const ser=all.filter(i=>i.type==="series"&&i.status!=="dropped").map(i=>({i,p:progress(i)}));
-  const upnext=ser.filter(x=>x.p&&x.p.next&&(x.p.started||x.i.status==="watching")&&x.i.status!=="want").sort((a,b)=>(b.i.lastWatched||"").localeCompare(a.i.lastWatched||""));
+  const isNew=x=>x.i.status==="watched"&&x.p.started&&x.p.next.date&&x.p.next.date>(x.i.lastWatched||"");
+  const withNext=ser.filter(x=>x.p&&x.p.next&&x.i.status!=="want");
+  const upnext=withNext.filter(x=>x.i.status==="watching"||isNew(x)).sort((a,b)=>(b.i.lastWatched||"").localeCompare(a.i.lastWatched||""));
+  const unfinished=withNext.filter(x=>x.i.status==="watched"&&x.p.started&&!isNew(x)).sort((a,b)=>(b.i.lastWatched||"").localeCompare(a.i.lastWatched||""));
   const wants=all.filter(i=>i.status==="want").sort((a,b)=>(b.addedAt||"").localeCompare(a.addedAt||""));
   const t=today(),ups=[];ser.forEach(({i,p})=>{if(p&&i.status!=="dropped")p.upcoming.forEach(e=>ups.push({i,e}))});
   ups.sort((a,b)=>a.e.date.localeCompare(b.e.date)||a.i.title.localeCompare(b.i.title));const days={};ups.slice(0,80).forEach(u=>(days[u.e.date]=days[u.e.date]||[]).push(u));
@@ -404,6 +407,9 @@ function viewHome(){
   return `<h2>Up next</h2>
   ${upnext.length?`<div class="list">${upnext.map(x=>nextHTML(x.i,x.p)).join("")}</div>`:loading?`<div class="skel" style="height:90px;margin-bottom:8px"></div><div class="skel" style="height:90px"></div>`:`<div class="empty muted">You're up to date on everything you're watching.</div>`}
   ${unmatched.length?`<p class="small muted" style="margin-top:8px">Couldn't find ${unmatched.map(x=>esc(x.i.title)).join(", ")} on TVmaze. Open it and tap <b>Find the right show</b>.</p>`:""}
+  ${unfinished.length?`<details class="season" style="margin-top:14px"><summary><span>Haven't finished <span class="sm">${unfinished.length}</span></span><span class="sm">Show</span></summary>
+    <p class="small muted">Shows you started but didn't watch to the end. Tick an episode to bring one back to Up next, or open it and choose <b>Gave up</b> to hide it.</p>
+    <div class="list">${unfinished.map(x=>nextHTML(x.i,x.p)).join("")}</div></details>`:""}
   <h2>Want to watch</h2>
   ${wants.length?`<div class="hscroll">${wants.map(tileHTML).join("")}</div>`:`<div class="empty muted small">Nothing yet. Find something in <a href="#search">Search</a> and tap <b>Want to watch</b>.</div>`}
   <h2>Coming soon</h2>
