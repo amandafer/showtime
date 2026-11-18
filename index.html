@@ -54,7 +54,7 @@ a{color:var(--accent)}
 .seg::-webkit-scrollbar{display:none}
 .chip{flex:none;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 13px;font-size:14px;font-weight:500}
 .chip[aria-pressed="true"]{background:var(--accent);color:#24170a;border-color:var(--accent)}
-input[type=text],input[type=search],select,textarea{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-height:44px}
+input[type=text],input[type=search],select,textarea{font-size:16px;width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-height:44px}
 textarea{min-height:110px;resize:vertical}
 .field{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
 .field label{font-size:13px;color:var(--muted);font-weight:500}
@@ -99,6 +99,8 @@ textarea{min-height:110px;resize:vertical}
 .stat span{font-size:12px;color:var(--muted)}
 
 nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:6;background:rgba(22,16,15,.95);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-top:1px solid var(--line);padding:6px 8px calc(6px + env(safe-area-inset-bottom))}
+body.typing nav.tabs{display:none}
+body.typing .wrap{padding-bottom:24px}
 nav.tabs .in{max-width:720px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
 nav.tabs a{position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;text-decoration:none;color:var(--muted);font-size:12px;font-weight:600;padding:6px;border-radius:10px}
 nav.tabs a svg{width:22px;height:22px}
@@ -447,7 +449,7 @@ function viewSearch(){const r=S.sr;
     const meta=[kind==="series"?"Series":"Film",x.year,x.network,x.status==="Ended"&&kind==="series"?"Ended":""].filter(Boolean).join(" · ");
     return `<div class="item"><button class="open" data-act="sopen" data-k="${kind}" data-n="${n}">${posterHTML(x.title,x.image)}<div style="min-width:0"><div class="t">${esc(x.title)}</div><div class="m">${esc(meta)}</div>${mine?`<div class="m"><span class="pill ${mine.status}">${STATUS[mine.status]||""}</span></div>`:kind==="movie"&&x.desc?`<div class="m">${esc(x.desc)}</div>`:""}</div></button>
       <div class="side">${mine?"":`<button class="btn ghost sm" data-act="squick" data-k="${kind}" data-n="${n}" aria-label="Add ${esc(x.title)} to Want to watch">+ Want</button>`}</div></div>`}).join("")}</div>`:"";
-  return `<h2>Search</h2><input type="search" id="sq" placeholder="Series or film title" value="${esc(S.sq||"")}" aria-label="Search series and films" autocomplete="off">
+  return `<h2>Search</h2><input type="search" id="sq" enterkeyhint="search" placeholder="Series or film title" value="${esc(S.sq||"")}" aria-label="Search series and films" autocomplete="off">
   ${S.sLoading?`<div class="skel" style="height:90px;margin-top:14px"></div>`:""}
   ${r?(r.series.length||r.films.length?sec("Series",r.series,"series")+sec("Films",r.films,"movie"):`<div class="empty muted" style="margin-top:14px">Nothing found for “${esc(S.sq)}”.</div>`):`<p class="muted small" style="margin-top:10px">Searches TVmaze for series and Wikipedia for films.</p>`}
   ${S.sErr?`<p class="small" style="margin-top:10px">${esc(S.sErr)}</p>`:""}`}
@@ -567,6 +569,10 @@ document.addEventListener("change",e=>{const t=e.target;
 $("#scrim").addEventListener("click",e=>{if(e.target.id==="scrim")closeSheet()});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&(sheet.id||sheet.temp))closeSheet()});
 window.addEventListener("hashchange",()=>{window.scrollTo(0,0);render()});
+const isField=el=>el&&(el.tagName==="INPUT"&&!/^(checkbox|radio|file|button)$/i.test(el.type)||el.tagName==="TEXTAREA"||el.tagName==="SELECT");
+document.addEventListener("focusin",e=>{if(isField(e.target))document.body.classList.add("typing")});
+document.addEventListener("focusout",()=>setTimeout(()=>{if(!isField(document.activeElement))document.body.classList.remove("typing")},80));
+document.addEventListener("keydown",e=>{if(e.key==="Enter"&&e.target.id==="sq"){e.target.blur()}});
 window.addEventListener("online",render);window.addEventListener("offline",render);
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)refreshShows()});
 if(navigator.serviceWorker&&navigator.serviceWorker.register)navigator.serviceWorker.register("sw.js").catch(()=>{});
